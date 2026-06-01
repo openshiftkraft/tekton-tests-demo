@@ -1,0 +1,210 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone-light
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: url
+      type: string
+    - name: revision
+      type: string
+      default: main
+  workspaces:
+    - name: source
+  steps:
+    - name: clone
+      image: alpine/git:2.45.2
+      script: |
+        #!/bin/sh
+        set -eux
+        rm -rf $(workspaces.source.path)/* $(workspaces.source.path)/.[!.]* || true
+        git clone --depth 1 --branch $(params.revision) $(params.url) $(workspaces.source.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: python-unit-tests
+  namespace: tekton-allure-demo
+spec:
+  workspaces:
+    - name: source
+    - name: allure-results
+  results:
+    - name: unit-status
+      description: Unit test status
+  steps:
+    - name: run
+      image: python:3.12-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        pip install --no-cache-dir -r app/requirements.txt -r requirements-test.txt
+        mkdir -p reports $(workspaces.allure-results.path)
+        pytest tests/unit \
+          --junitxml=reports/unit-junit.xml \
+          --cov=app \
+          --cov-report=xml:reports/coverage.xml \
+          --alluredir=$(workspaces.allure-results.path)/unit
+        echo -n passed > $(results.unit-status.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-image-buildah
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: image
+      type: string
+  workspaces:
+    - name: source
+  results:
+    - name: image-url
+      description: Built image URL
+  steps:
+    - name: build-and-push
+      image: quay.io/buildah/stable:v1.38
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        privileged: true
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        buildah bud --storage-driver=vfs -t $(params.image) .
+        buildah push --storage-driver=vfs --tls-verify=false $(params.image)
+        echo -n "$(params.image)" > $(results.image-url.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy-to-openshift
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: image
+      type: string
+    - name: pipeline-run-name
+      type: string
+  workspaces:
+    - name: source
+  results:
+    - name: app-url
+      description: OpenShift route URL for the demo API
+  steps:
+    - name: deploy
+      image: quay.io/openshift/origin-cli:4.16
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        sed \
+          -e "s|IMAGE_PLACEHOLDER|$(params.image)|g" \
+          -e "s|PIPELINERUN_PLACEHOLDER|$(params.pipeline-run-name)|g" \
+          openshift/03-app-template.yaml | oc apply -n $(context.taskRun.namespace) -f -
+        oc rollout status deployment/demo-api -n $(context.taskRun.namespace) --timeout=180s
+        HOST=$(oc get route demo-api -n $(context.taskRun.namespace) -o jsonpath='{.spec.host}')
+        echo -n "http://${HOST}" > $(results.app-url.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: python-functional-tests
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: base-url
+      type: string
+  workspaces:
+    - name: source
+    - name: allure-results
+  results:
+    - name: functional-status
+      description: Functional test status
+  steps:
+    - name: run
+      image: python:3.12-slim
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: BASE_URL
+          value: $(params.base-url)
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        pip install --no-cache-dir -r requirements-test.txt
+        mkdir -p reports $(workspaces.allure-results.path)/functional
+        pytest tests/functional \
+          --junitxml=reports/functional-junit.xml \
+          --alluredir=$(workspaces.allure-results.path)/functional
+        echo -n passed > $(results.functional-status.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: k6-performance-tests
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: base-url
+      type: string
+    - name: vus
+      type: string
+      default: "5"
+    - name: duration
+      type: string
+      default: "30s"
+  workspaces:
+    - name: source
+    - name: allure-results
+  results:
+    - name: performance-status
+      description: Performance test status
+  steps:
+    - name: run
+      image: grafana/k6:0.54.0
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: BASE_URL
+          value: $(params.base-url)
+        - name: VUS
+          value: $(params.vus)
+        - name: DURATION
+          value: $(params.duration)
+      script: |
+        #!/bin/sh
+        set -eux
+        mkdir -p /workspace/reports $(workspaces.allure-results.path)/performance
+        # k6 script writes JUnit and Allure files to fixed paths.
+        k6 run tests/performance/k6-smoke.js
+        cp -f /workspace/allure-results/* $(workspaces.allure-results.path)/performance/ || true
+        echo -n passed > $(results.performance-status.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: summarize-test-results
+  namespace: tekton-allure-demo
+spec:
+  workspaces:
+    - name: source
+    - name: allure-results
+  params:
+    - name: app-url
+      type: string
+  results:
+    - name: allure-url
+      description: Allure route URL
+  steps:
+    - name: summarize
+      image: quay.io/openshift/origin-cli:4.16
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        echo "Allure raw results stored in PVC at: $(workspaces.allure-results.path)"
+        find $(workspaces.allure-results.path) -maxdepth 3 -type f | sort || true
+        HOST=$(oc get route allure -n $(context.taskRun.namespace) -o jsonpath='{.spec.host}')
+        echo -n "http://${HOST}" > $(results.allure-url.path)
+        echo "Application: $(params.app-url)"
+        echo "Allure: http://${HOST}"

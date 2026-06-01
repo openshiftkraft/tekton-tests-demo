@@ -1,0 +1,107 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: demo-ci-test-pipeline
+  namespace: tekton-allure-demo
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+      default: main
+    - name: image
+      type: string
+      default: image-registry.openshift-image-registry.svc:5000/tekton-allure-demo/demo-api:latest
+    - name: perf-vus
+      type: string
+      default: "5"
+    - name: perf-duration
+      type: string
+      default: "30s"
+  workspaces:
+    - name: source
+    - name: allure-results
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone-light
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: unit-tests
+      runAfter: [clone]
+      taskRef:
+        name: python-unit-tests
+      workspaces:
+        - name: source
+          workspace: source
+        - name: allure-results
+          workspace: allure-results
+    - name: build-image
+      runAfter: [unit-tests]
+      taskRef:
+        name: build-image-buildah
+      params:
+        - name: image
+          value: $(params.image)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: deploy
+      runAfter: [build-image]
+      taskRef:
+        name: deploy-to-openshift
+      params:
+        - name: image
+          value: $(tasks.build-image.results.image-url)
+        - name: pipeline-run-name
+          value: $(context.pipelineRun.name)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: functional-tests
+      runAfter: [deploy]
+      taskRef:
+        name: python-functional-tests
+      params:
+        - name: base-url
+          value: $(tasks.deploy.results.app-url)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: allure-results
+          workspace: allure-results
+    - name: performance-tests
+      runAfter: [functional-tests]
+      taskRef:
+        name: k6-performance-tests
+      params:
+        - name: base-url
+          value: $(tasks.deploy.results.app-url)
+        - name: vus
+          value: $(params.perf-vus)
+        - name: duration
+          value: $(params.perf-duration)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: allure-results
+          workspace: allure-results
+    - name: summarize
+      runAfter: [performance-tests]
+      taskRef:
+        name: summarize-test-results
+      params:
+        - name: app-url
+          value: $(tasks.deploy.results.app-url)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: allure-results
+          workspace: allure-results

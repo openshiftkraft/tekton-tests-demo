@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pipeline
+  namespace: tekton-allure-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: demo-pipeline-deployer
+  namespace: tekton-allure-demo
+rules:
+  - apiGroups: ["", "apps", "route.openshift.io", "image.openshift.io"]
+    resources: ["services", "deployments", "routes", "imagestreams", "pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: demo-pipeline-deployer
+  namespace: tekton-allure-demo
+subjects:
+  - kind: ServiceAccount
+    name: pipeline
+    namespace: tekton-allure-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: demo-pipeline-deployer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-image-pusher
+  namespace: tekton-allure-demo
+subjects:
+  - kind: ServiceAccount
+    name: pipeline
+    namespace: tekton-allure-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-builder

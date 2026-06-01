@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: demo-ci-test-pipeline-run-
+  namespace: tekton-allure-demo
+spec:
+  serviceAccountName: pipeline
+  pipelineRef:
+    name: demo-ci-test-pipeline
+  params:
+    - name: git-url
+      value: GIT_URL_PLACEHOLDER
+    - name: git-revision
+      value: main
+    - name: image
+      value: image-registry.openshift-image-registry.svc:5000/tekton-allure-demo/demo-api:latest
+    - name: perf-vus
+      value: "5"
+    - name: perf-duration
+      value: "30s"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: allure-results
+      persistentVolumeClaim:
+        claimName: allure-results-pvc
