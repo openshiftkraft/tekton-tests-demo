@@ -41,6 +41,7 @@ spec:
         #!/usr/bin/env bash
         set -euxo pipefail
         pip install --no-cache-dir -r app/requirements.txt -r requirements-test.txt
+        export PYTHONPATH=$(workspaces.source.path)
         mkdir -p reports $(workspaces.allure-results.path)
         pytest tests/unit \
           --junitxml=reports/unit-junit.xml \
@@ -133,6 +134,7 @@ spec:
         #!/usr/bin/env bash
         set -euxo pipefail
         pip install --no-cache-dir -r requirements-test.txt
+        export PYTHONPATH=$(workspaces.source.path)
         mkdir -p reports $(workspaces.allure-results.path)/functional
         pytest tests/functional \
           --junitxml=reports/functional-junit.xml \

@@ -20,8 +20,7 @@ spec:
       type: string
       default: "30s"
   workspaces:
-    - name: source
-    - name: allure-results
+    - name: shared
   tasks:
     - name: clone
       taskRef:
@@ -33,16 +32,19 @@ spec:
           value: $(params.git-revision)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
     - name: unit-tests
       runAfter: [clone]
       taskRef:
         name: python-unit-tests
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
         - name: allure-results
-          workspace: allure-results
+          workspace: shared
+          subPath: allure-results
     - name: build-image
       runAfter: [unit-tests]
       taskRef:
@@ -52,7 +54,8 @@ spec:
           value: $(params.image)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
     - name: deploy
       runAfter: [build-image]
       taskRef:
@@ -64,7 +67,8 @@ spec:
           value: $(context.pipelineRun.name)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
     - name: functional-tests
       runAfter: [deploy]
       taskRef:
@@ -74,9 +78,11 @@ spec:
           value: $(tasks.deploy.results.app-url)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
         - name: allure-results
-          workspace: allure-results
+          workspace: shared
+          subPath: allure-results
     - name: performance-tests
       runAfter: [functional-tests]
       taskRef:
@@ -90,9 +96,11 @@ spec:
           value: $(params.perf-duration)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
         - name: allure-results
-          workspace: allure-results
+          workspace: shared
+          subPath: allure-results
     - name: summarize
       runAfter: [performance-tests]
       taskRef:
@@ -102,6 +110,8 @@ spec:
           value: $(tasks.deploy.results.app-url)
       workspaces:
         - name: source
-          workspace: source
+          workspace: shared
+          subPath: source
         - name: allure-results
-          workspace: allure-results
+          workspace: shared
+          subPath: allure-results

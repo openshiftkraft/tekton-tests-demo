@@ -19,13 +19,6 @@ spec:
     - name: perf-duration
       value: "30s"
   workspaces:
-    - name: source
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 1Gi
-    - name: allure-results
+    - name: shared
       persistentVolumeClaim:
         claimName: allure-results-pvc
