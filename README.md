@@ -55,7 +55,7 @@ oc login ...
 3. Run:
 
 ```bash
-GIT_URL=https://github.com/YOUR_ORG/tekton-allure-demo.git \
+GIT_URL=https://github.com/openshiftkraft/tekton-tests-demo.git \
 GIT_REVISION=main \
 ./scripts/bootstrap.sh
 ```
@@ -83,7 +83,7 @@ oc apply -f openshift/02-allure.yaml
 oc apply -f tekton/tasks.yaml
 oc apply -f tekton/pipeline.yaml
 
-sed 's|GIT_URL_PLACEHOLDER|https://github.com/YOUR_ORG/tekton-allure-demo.git|g' \
+sed 's|GIT_URL_PLACEHOLDER|https://github.com/openshiftkraft/tekton-tests-demo.git|g' \
   tekton/pipelinerun-template.yaml | oc create -f -
 ```
 

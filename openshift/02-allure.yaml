@@ -84,3 +84,6 @@ spec:
     name: allure
   port:
     targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
