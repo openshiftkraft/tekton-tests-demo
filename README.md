@@ -11,12 +11,13 @@ This repository is a complete demo for orchestrating unit, functional, and perfo
 - **Tekton pipeline**:
   1. Clone source
   2. Run unit tests
-  3. Build and push container image with Buildah
+  3. Build the container image with OpenShift Builds
   4. Deploy to OpenShift
   5. Run functional tests
   6. Run k6 performance test
-  7. Summarize result locations
-- **Allure service**: OpenShift Deployment, Service, Route, and PVC-backed raw-result storage.
+  7. Generate the Allure HTML report
+  8. Summarize result locations
+- **Allure report server**: OpenShift Deployment, Service, and Route serving the generated Allure HTML report from PVC storage.
 
 ## Repository layout
 
@@ -39,11 +40,7 @@ On the OpenShift cluster:
 - OpenShift internal image registry available.
 - A default StorageClass that can provision PVCs.
 - Permission to create namespace resources.
-- For the Buildah task, the `pipeline` ServiceAccount usually needs a compatible SCC. In many OpenShift Pipelines installations this is already handled. If the Buildah task fails with permission errors, a cluster admin can run:
-
-```bash
-oc adm policy add-scc-to-user privileged -z pipeline -n tekton-allure-demo
-```
+- No privileged Tekton Task is required. The image build uses OpenShift Builds with a DockerStrategy binary build, so the Tekton pod only needs permission to create and start BuildConfigs/Builds.
 
 ## Quick start
 
@@ -70,7 +67,7 @@ tkn pipelinerun list -n tekton-allure-demo
 tkn pipelinerun logs -n tekton-allure-demo -f --last
 ```
 
-5. Open the app and Allure routes:
+5. Open the app and Allure report routes:
 
 ```bash
 oc get route demo-api -n tekton-allure-demo
@@ -92,29 +89,39 @@ sed 's|GIT_URL_PLACEHOLDER|https://github.com/YOUR_ORG/tekton-allure-demo.git|g'
 
 ## Result model
 
-The demo uses two reporting layers:
+The demo uses three reporting layers:
 
 1. **Tekton status and task results**
    - PipelineRun/TaskRun status tells you whether the CI gate passed or failed.
-   - Task results expose `unit-status`, `functional-status`, `performance-status`, `app-url`, and `allure-url`.
+   - Task results expose `unit-status`, `functional-status`, `performance-status`, `report-status`, `app-url`, and `allure-url`.
 
 2. **Allure raw results**
-   - Unit test raw results: `/app/allure-results/unit`
-   - Functional test raw results: `/app/allure-results/functional`
-   - Performance test raw result: `/app/allure-results/performance`
+   - Unit test raw results: `allure-results/unit`
+   - Functional test raw results: `allure-results/functional`
+   - Performance test raw result: `allure-results/performance`
 
-The Allure Docker Service watches the mounted PVC and refreshes reports when new raw results appear.
+3. **Generated Allure HTML report**
+   - The `generate-allure-report` Tekton task collects raw Allure result files, preserves report history, generates static Allure HTML, and writes it to the shared PVC under `allure-report`.
+   - The `allure` OpenShift Route exposes that generated report directly through an unprivileged nginx container.
+
+After a successful PipelineRun, open:
+
+```bash
+oc get route allure -n tekton-allure-demo
+```
+
+Then browse to the returned host. You should see the normal Allure report UI immediately, without calling `/generate-report` or `/latest-report`.
 
 ## Notes and production hardening
 
 This is intentionally a concise demo. For production, consider:
 
-- Store raw Allure results in object storage or a shared RWX volume.
+- Store raw Allure results and generated report history in object storage or a shared RWX volume.
 - Use Tekton Results for long-term PipelineRun/TaskRun history.
 - Add Tekton Chains for signed build provenance.
 - Use a proper image tag instead of `latest`, e.g. Git SHA or PipelineRun name.
 - Split smoke, regression, and performance stages by trigger type.
-- Replace privileged Buildah with your organization’s approved build strategy if needed.
+- For production, replace the demo OpenShift BuildConfig with your organization’s approved build strategy if different, such as Shipwright, Buildpacks, or a managed build service.
 - Add NetworkPolicies, resource limits, and Route TLS.
 
 ## Local run

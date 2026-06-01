@@ -53,28 +53,56 @@ spec:
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: build-image-buildah
+  name: build-image-openshift-builds
   namespace: tekton-allure-demo
 spec:
   params:
     - name: image
       type: string
+      description: Image reference used later by the deployment.
   workspaces:
     - name: source
   results:
     - name: image-url
       description: Built image URL
   steps:
-    - name: build-and-push
-      image: quay.io/buildah/stable:v1.38
+    - name: start-binary-build
+      image: quay.io/openshift/origin-cli:4.16
       workingDir: $(workspaces.source.path)
-      securityContext:
-        privileged: true
       script: |
         #!/usr/bin/env bash
         set -euxo pipefail
-        buildah bud --storage-driver=vfs -t $(params.image) .
-        buildah push --storage-driver=vfs --tls-verify=false $(params.image)
+
+        # Avoid privileged Buildah/Podman inside the Tekton Task.
+        # Tekton only asks the OpenShift Build API to run a DockerStrategy binary build.
+        # The actual image build is handled by OpenShift Builds using cluster-approved SCCs.
+        cat <<'EOF' | oc apply -n $(context.taskRun.namespace) -f -
+        apiVersion: image.openshift.io/v1
+        kind: ImageStream
+        metadata:
+          name: demo-api
+        ---
+        apiVersion: build.openshift.io/v1
+        kind: BuildConfig
+        metadata:
+          name: demo-api
+        spec:
+          source:
+            type: Binary
+          strategy:
+            type: Docker
+            dockerStrategy:
+              dockerfilePath: Dockerfile
+          output:
+            to:
+              kind: ImageStreamTag
+              name: demo-api:latest
+          successfulBuildsHistoryLimit: 3
+          failedBuildsHistoryLimit: 3
+        EOF
+
+        oc start-build demo-api           -n $(context.taskRun.namespace)           --from-dir=$(workspaces.source.path)           --follow           --wait
+
         echo -n "$(params.image)" > $(results.image-url.path)
 ---
 apiVersion: tekton.dev/v1
@@ -185,12 +213,71 @@ spec:
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
+  name: generate-allure-report
+  namespace: tekton-allure-demo
+spec:
+  workspaces:
+    - name: allure-results
+    - name: allure-report
+  results:
+    - name: report-status
+      description: Allure static report generation status
+  steps:
+    - name: generate
+      image: tobix/allure-cli:latest
+      script: |
+        #!/bin/sh
+        set -eux
+
+        RAW="$(workspaces.allure-results.path)"
+        REPORT="$(workspaces.allure-report.path)"
+        COMBINED="/tmp/allure-combined-results"
+        NEXT_REPORT="/tmp/allure-generated-report"
+
+        rm -rf "$COMBINED" "$NEXT_REPORT"
+        mkdir -p "$COMBINED" "$REPORT"
+
+        # Preserve trend/history data from the previous generated report, if present.
+        if [ -d "$REPORT/history" ]; then
+          mkdir -p "$COMBINED/history"
+          cp -R "$REPORT/history/." "$COMBINED/history/" || true
+        fi
+
+        # Flatten results from unit, functional, and performance subdirectories.
+        find "$RAW" -type f \( \
+          -name '*-result.json' -o \
+          -name '*-container.json' -o \
+          -name '*-attachment.*' -o \
+          -name 'categories.json' -o \
+          -name 'environment.properties' -o \
+          -name 'executor.json' \
+        \) -exec cp {} "$COMBINED" \;
+
+        cat > "$COMBINED/environment.properties" <<EOF
+        Platform=OpenShift
+        Orchestrator=Tekton
+        Report=Allure static HTML
+        EOF
+
+        allure generate "$COMBINED" --clean -o "$NEXT_REPORT"
+
+        # Replace the served report atomically enough for this demo.
+        find "$REPORT" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
+        cp -R "$NEXT_REPORT/." "$REPORT/"
+        chmod -R a+rX "$REPORT" || true
+
+        echo -n generated > $(results.report-status.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
   name: summarize-test-results
   namespace: tekton-allure-demo
 spec:
   workspaces:
     - name: source
     - name: allure-results
+    - name: allure-report
   params:
     - name: app-url
       type: string
@@ -206,7 +293,9 @@ spec:
         set -euxo pipefail
         echo "Allure raw results stored in PVC at: $(workspaces.allure-results.path)"
         find $(workspaces.allure-results.path) -maxdepth 3 -type f | sort || true
+        echo "Allure static HTML report stored in PVC at: $(workspaces.allure-report.path)"
+        find $(workspaces.allure-report.path) -maxdepth 2 -type f | sort | head -50 || true
         HOST=$(oc get route allure -n $(context.taskRun.namespace) -o jsonpath='{.spec.host}')
         echo -n "http://${HOST}" > $(results.allure-url.path)
         echo "Application: $(params.app-url)"
-        echo "Allure: http://${HOST}"
+        echo "Allure report: http://${HOST}"

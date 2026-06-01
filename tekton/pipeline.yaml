@@ -48,7 +48,7 @@ spec:
     - name: build-image
       runAfter: [unit-tests]
       taskRef:
-        name: build-image-buildah
+        name: build-image-openshift-builds
       params:
         - name: image
           value: $(params.image)
@@ -101,8 +101,19 @@ spec:
         - name: allure-results
           workspace: shared
           subPath: allure-results
-    - name: summarize
+    - name: generate-allure-report
       runAfter: [performance-tests]
+      taskRef:
+        name: generate-allure-report
+      workspaces:
+        - name: allure-results
+          workspace: shared
+          subPath: allure-results
+        - name: allure-report
+          workspace: shared
+          subPath: allure-report
+    - name: summarize
+      runAfter: [generate-allure-report]
       taskRef:
         name: summarize-test-results
       params:
@@ -115,3 +126,6 @@ spec:
         - name: allure-results
           workspace: shared
           subPath: allure-results
+        - name: allure-report
+          workspace: shared
+          subPath: allure-report
