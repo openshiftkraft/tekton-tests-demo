@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Performance Warnings",
+    "description": "Tests that passed functionally but did not meet performance SLA targets",
+    "matchedStatuses": ["broken"],
+    "messageRegex": ".*SLA.*"
+  },
+  {
+    "name": "Infrastructure Flakes",
+    "description": "Intermittent failures caused by environment or network conditions",
+    "matchedStatuses": ["broken", "failed"],
+    "messageRegex": ".*(timeout|connection|DNS|network).*"
+  },
+  {
+    "name": "Known Defects",
+    "description": "Failures linked to known issues being tracked",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*known.*"
+  }
+]
